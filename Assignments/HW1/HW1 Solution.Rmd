@@ -1,0 +1,623 @@
+---
+title: "Assignment 1"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    extra_dependencies: ["float"]
+classoption: a4paper
+geometry: "left=1cm, right=1cm, top=2cm, bottom=2cm"
+fontsize: 10pt
+fontfamily: mathptmx
+header-includes:
+  - \usepackage{wrapfig}
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+
+# Set the font size for R code
+knitr::opts_chunk$set(size = "small")
+
+```
+
+
+# Read .wea files
+
+Check the common structure of all .wea files across
+```{r}
+# To use list.files function in R to find all .wea files within all subfolders, you can set the recursive argument to TRUE
+weaFiles=list.files(getwd(), pattern = ".wea",recursive = TRUE, full.names = TRUE)
+```
+
+
+```{r}
+# read the first few lines of all files
+tmp = lapply(weaFiles, readLines, n = 10)
+```
+
+We can visually inspect these to see they have the same structure, but different values
+that are site-specific.
+
+We can programmatically check the first line starts with place, the second with latitude, etc.
+```{r}
+expect = c("place", "latitude", "longitude", "time_zone", "site_elevation", 
+           "weather_data_file_units")
+# sapply, lapply, all, substr
+all(lapply(tmp, function(x) all(substr(x[1:6],1,nchar(expect))==expect) ))
+```
+This is TRUE so we have the same structure (and in the same order) in each file.
+
+ 
+
+The data from each file are straightforward to read by skipping the first 6 lines
+and noting there are no columb names
+
+```{r}
+# first sample lines to read in
+ll= lapply(weaFiles, readLines)
+ll2=lapply(ll,function(x) x[7:length(x)])
+ll3=lapply(ll2, sample, 10)
+
+ll4= lapply(ll3, function(x){
+  con=textConnection(x)
+  read.table(con, sep = " ", header = FALSE)
+})
+
+# check common structure
+sapply(ll4,nrow)
+sapply(ll4,ncol)
+sapply(ll4,str)
+
+# read in all data
+dd = lapply(weaFiles, read.table, sep = " ", header = FALSE, skip = 6)
+```
+We do a quick sanity check
+```{r}
+sapply(dd, nrow)
+```
+They each have 8760 rows.
+
+Are they all the same
+```{r}
+identical(dd[[1]], dd[[2]]) 
+```
+ 
+To examine the values, we will stack these data frames along with the location
+```{r}
+?do.call
+# In R, do.call() is a function that allows you to call a function with a list of arguments. It is often used in situations where the arguments to a function are stored in a list or other data structure.
+wea = do.call(rbind, dd)
+# basename removes all of the path up to and including the last path separator
+wea$location = rep(basename(weaFiles), sapply(dd, nrow))
+```
+
+Just to check we didn't mess anything up, let's count the number of rows for the different locations we have:
+```{r}
+table(wea$location)
+str(wea)
+```
+Make some simple vis
+```{r,fig.width=5}
+library(ggplot2)
+library(dplyr)
+
+wea%>%ggplot()+
+  geom_density(aes(V4,col=location, group=location),alpha=0.5)
+
+wea%>%ggplot()+
+  geom_density(aes(V5,col=location, group=location),alpha=0.5)
+
+#save(wea, file = "wea.Rdata")
+```
+
+
+
+We define our function as
+```{r}
+readWEA =function(file)read.table(file, sep = " ", header = FALSE, skip = 6)
+```
+
+Finally, we read the 5 WEA files and check the results for basic structure:
+```{r}
+wea = lapply(weaFiles, readWEA)
+sapply(wea, class)
+sapply(wea, dim)
+```
+
+
+# Reading a .clm File
+
+The top of a .clm file looks something like
+```
+*CLIMATE
+# ascii climate file from USA_Bodega.Bay.CG.Light.Station EPW file,
+# defined in: .\EPW_Output\USA_CA_Bodega.Bay.CG.Light.Station.724995_TMYx.clm
+# col 1: Diffuse solar on the horizontal (W/m**2)
+# col 2: External dry bulb temperature   (Tenths DEG.C)
+# col 3: Direct normal solar intensity   (W/m**2)
+# col 4: Prevailing wind speed           (Tenths m/s)
+# col 5: Wind direction     (clockwise deg from north)
+# col 6: Relative humidity               (Percent)
+Bodega.Bay.CG.Light.Station - USA     # site name
+ 2021,38.31,-3.05,0   # year, latitude, long diff, direct normal rad flag
+ 1,365    # period (julian days)
+* day  1 month  1
+ 0,75,0,11,329,92
+ 0,72,0,20,338,91
+ 0,75,0,13,341,93
+ 0,61,0,13,338,95
+```
+The lines col 1, col 2, ... provide the descriptions of the variables.
+
+
+While we also want the metadata, we'll focus on the values.
+These are the rows after the 
+```
+* day <num> month <num>
+```
+lines. We only see one of these but there are more.
+
+```{r}
+clmFiles=list.files(getwd(), pattern = ".clm",recursive = TRUE, full.names = TRUE)
+# read the first few lines of all files
+tmp = lapply(clmFiles, readLines, n = 15)
+```
+```{r}
+# check expected pattern for the first 9 lines
+expect=c("*CLIMATE","# ascii climate file from","# defined in","# col 1","# col 2","# col 3","# col 4","# col 5","# col 6")
+
+ll=lapply(clmFiles, readLines, n=9)
+sapply(ll, function(x) all(substr(x, 1, nchar(expect))==expect))
+
+library(stringr)
+# check expected pattern for the 10-12
+expect=c("# site name",
+         "# year, latitude, long diff, direct normal rad flag",
+         "# period (julian days)")
+ll=lapply(clmFiles, readLines, n=12)
+sapply(ll, function(x) all(str_sub(x[10:12], -nchar(expect), -1)==expect))
+ 
+```
+
+```{r}
+dd=lapply(clmFiles, read.table, sep=",", skip=13, header = FALSE)
+?read.table
+```
+  
+We can also filter the values out in the call to read.table.
+We can change what read.table considers a comment character to *
+```{r}
+dd=lapply(clmFiles, read.table, sep=",", skip=13, header = FALSE, comment.char = "*")
+z2 = read.csv(f, skip = 13, header = FALSE, comment.char = "*")
+sapply(dd, class)
+sapply(dd, str)
+head(dd, 33)
+```
+
+
+While these two approaches allow us to obtain a data.frame,
+we have lost the day and month information.
+We need to add two columns
+
+There are various approaches we could use, but each relies
+on identifying the row identifying the start of a new month.
+
+```{r}
+ll=lapply(clmFiles, readLines)
+ll=ll[[1]]
+# remove the first 13 lines
+ll = ll[-(1:12)]
+
+# indicator for day/month lines
+isDay=lapply(ll,str_sub, 1,5)=="* day"
+str(isDay)
+
+# split each dataset into multiple blocks by * day
+groups=cumsum(isDay)
+blocks=split(ll,groups)
+subdf= lapply(blocks, function(x) read.table(textConnection(x[-1]),header=FALSE,sep=","))
+dd=do.call(rbind, subdf)
+```
+
+ 
+We can add the day and month to the entire data.frame, but it may be simpler to do this when
+creating each sub-data.frame, i.e., when processing a block.
+The first line in each block is of the form
+``` 
+"* day 25 month 12"
+```
+We'll separate this by space and exract the third and fifth elements.
+Then we can repeat these
+```{r}
+procCLMBlock=function(x){
+  #x=blocks[[1]]
+  df=read.table(textConnection(x[-1]),header=FALSE,sep=",")
+  dayline=str_split(x[1], " ")[[1]]
+  df$day=dayline[3]
+  df$month=dayline[5]
+  return(df)
+}
+subdf=lapply(blocks,procCLMBlock)
+dd=do.call(rbind, subdf)
+# check NA 
+head(dd)
+```
+```{r}
+month.dfs = lapply(blocks, procCLMBlock)
+```
+But this doesn't quite work.
+We get warnings
+
+```{r}
+# check common structure
+checkerror=function(x){
+  #x=blocks[[1]]
+  df=read.table(textConnection(x[-1]),header=FALSE,sep=",")
+  dayline=str_split(x[1], " ")[[1]]
+  return(dayline)
+}
+tmp=lapply(blocks,checkerror)
+sapply(tmp,length)
+```
+ 
+Here is our problem - the third element is "" not the "2".
+Similarly "month" and "1" are separated by "".
+This is presumably (assumption) because these are single digit numbers.
+When we get to a day with 2 digits, this won't happen for the day, and
+similarly for the month.
+
+We can fix this by using a regular expression in the call to `strsplit()`,
+but we haven't covered these at this point in the course.
+So we just remove "" entries and then the third and fifth elements will be as we expect.
+```{r}
+procCLMBlock=function(x){
+  #x=blocks[[1]]
+  df=read.table(textConnection(x[-1]),header=FALSE,sep=",")
+  dayline=str_split(x[1], "[\\s|\"]+")[[1]] # els = els[els != ""]
+  df$day=as.integer(dayline[3])
+  df$month=as.integer(dayline[5])
+  return(df)
+}
+subdf=lapply(blocks,procCLMBlock)
+dd=do.call(rbind, subdf)
+# check NA 
+head(dd) 
+# NA for each column
+sapply(dd, function(x) all(is.na(x)==FALSE))
+```
+Good, put into a function calling readCLMBlock inside
+```{r}
+readCLM=function(f){
+  ll = readLines(f)
+	ll = ll[-(1:12)]
+	isDay=lapply(ll,str_sub, 1,5)=="* day"
+  #groups=cumsum(isDay)
+  #blocks=split(ll,groups)
+	# ?tapply	
+	tmp = tapply(ll, cumsum(isDay), procCLMBlock)
+	do.call(rbind, tmp)
+}
+```
+
+
+```{r}
+dd = lapply(clmFiles, readCLM)
+names(dd) = basename(clmFiles)
+```
+We got no error(s) or warnings.
+However, we now have to check the values are correct.
+
+We can check the day values range from 1 to 12 at most
+and the day values range from 1 to 31.
+
+
+We can also stack the 5 data.frames together
+and compare the distributions for each of the different variables across the different locations.
+Before we do this, we should verify 
+
++ the data frames have the same number of columns
++ the variables in each clm file are the same.
+
+```{r}
+sapply(dd, ncol)
+table(sapply(dd, ncol))
+```
+Indeed, they all have 8 columns.
+
+
+To get the descriptions of the variables, we can read the file
+and find the lines starting with `# col`
+```{r}
+descs= lapply(clmFiles, function(f) grep("# col",readLines(f),value=TRUE))
+descs[[1]]
+```
+  
+Are they all the same? We can check they are all the same as the first one:
+```{r}
+sapply(descs[-1], identical, descs[[1]])
+# descs[1]: still list
+# descs[[1]]: vector
+```
+So they are all the same.
+ 
+
+We can stack the data.frames with 
+```{r}
+dd2 = do.call(rbind, dd)
+dd2$location = rep(names(dd), sapply(dd, nrow))
+```
+ 
+
+We can compare the density of values for V1
+```{r}
+dd2%>%ggplot()+
+  geom_density(aes(x=V1,col=location)) 
+
+dd2%>%ggplot()+
+  geom_density(aes(x=V2,col=location))
+
+dd2%>%ggplot()+
+  geom_density(aes(x=V3,col=location)) 
+dd2%>%ggplot()+
+  geom_density(aes(x=V4,col=location)) 
+
+dd2%>%ggplot()+
+  geom_density(aes(x=V6,col=location))
+```
+
+Of course, the fact that these are similar doesn't mean they are correct.
+There could be a bug in our code that makes each location incorrect.
+
+ 
+
+
+We want to put the names of the 6 variables on the data.frame(s).
+Again, we'll use regular expressions which we haven't covered yet.
+
+In `descs[[1]]` above, we found the lines starting with `"# col"`.
+These look like
+```
+# col 1: Diffuse solar on the horizontal (W/m**2)
+# col 2: External dry bulb temperature   (Tenths DEG.C)
+# col 3: Direct normal solar intensity   (W/m**2)
+# col 4: Prevailing wind speed           (Tenths m/s)
+# col 5: Wind direction     (clockwise deg from north)
+# col 6: Relative humidity               (Percent)
+```
+We want the text after the : but not including the parenthetical part - the units.
+```{r}
+a = gsub("# col [0-9]: ", "", descs[[1]])
+b = gsub("\\(.*", "", a)
+names(zz)[1:length(b)] = trimws(b)
+```
+ 
+
+
+# Read in .stat
+
+```{r}
+statFiles=list.files(getwd(), pattern = ".stat",recursive = TRUE, full.names = TRUE)
+# read the first few lines of all files
+ll= readLines(statFiles[[2]])
+ 
+```
+
+
+
+```{r}
+# take out all table titles
+titles = c("Monthly Statistics for Dry Bulb temperatures",
+           "Monthly Statistics for Dew Point temperatures",
+           "Average Hourly Statistics for Dry Bulb temperatures",
+           "Average Hourly Statistics for Dew Point temperatures",
+            "Average Hourly Relative Humidity",
+            "Monthly Wind Direction {Interval 11.25 deg from displayed deg)", 
+            "Average Hourly Statistics for Direct Normal Solar Radiation",
+            "Monthly Statistics for Wind Speed",
+            "Average Hourly Statistics for Wind Speed"
+)
+#str_detect( ll,titles[7]) # grep has issues
+ 
+# check if all table names are right and exist
+index=sapply(sapply(titles, function(x) str_detect(ll,fixed(x))),length)
+
+```
+All table exists! grep has encoding issue, use str_detect()
+ 
+ 
+
+
+```{r}
+# try first table
+
+i = grep(titles[1], ll, value=FALSE, fixed = TRUE)
+if(length(i)==0){stop("Can't find table", titles[[1]], " in ", statFiles[[1]] )} #?stop
+# subset from the first row of the currect table
+ll2 = ll[-(1:i)]
+# table always end with summary lines start with -
+end=min(which(str_sub(ll2, 1,2 )==" -"|str_sub(ll2, 1,4 )=="   -"))
+ll3 = ll2[1:(end - 1L)]
+# remove empty lines
+ll3 = ll3[ ll3 != ""]
+# assign row names by first col
+ll4=read.table(textConnection(ll3[-1]),sep="\t",header=F)
+# remove all NA columns, first and last
+nas=sapply(ll4,function(x) all(is.na(x)))
+ll5=ll4[,-which(nas==TRUE)]
+# get variables names from the table
+cols=trimws(strsplit(ll3[1],"\t")[[1]])
+cols=cols[cols!=""]
+
+names(ll5)=c("label", cols )
+
+```
+
+
+```{r}
+# Function: read one table from one file only
+readStatFile=function(f,tableTitle){
+  # f=statFiles[1]
+  #tableTitle=titles[1]
+  ll = readLines(f)
+  i = min(which(str_detect(ll,fixed(tableTitle))))
+  if(length(i)==0){stop("Can't find table ", tableTitle, " in ", f )}  
+  # subset from the first row of the currect table
+  ll2 = ll[-(1:i)]
+  # table always end with summary lines start with -
+  end=min(which(str_sub(ll2, 1,2 )==" -"|str_sub(ll2, 1,4 )=="   -"))
+  ll3 = ll2[1:(end - 1L)]
+  # remove empty lines
+  ll3 = ll3[ ll3 != ""]
+  # assign row names by first col
+  con=textConnection(ll3[-1])
+  ll4=read.table(con,sep="\t",header=F)
+  on.exit(close(con))
+  # remove all NA columns, first and last
+  nas=sapply(ll4,function(x) all(is.na(x)))
+  ll5=ll4[,-which(nas==TRUE)]
+  # get variables names from the table
+  cols=trimws(strsplit(ll3[1],"\t")[[1]])
+  cols=cols[cols!=""]
+  
+  names(ll5)=c("label", cols )
+  return(ll5)
+}
+```
+
+```{r}
+# Function: return a list of data.frames with names
+tmp=lapply(titles,readStatFile, f=statFiles[1])
+names(tmp)=titles
+tmp
+str(tmp)
+```
+
+For monthly data:
+Verify that the Max Hour and Min Hour are correct. – then omit these rows
+• Convert the data so that the rows corresponding to measured variables and dates e.g. Maximum, Minimum, Daily Avg, . . . are columns and the columns corresponding to months are rows.
+• Convert the Day:Hour values to a time (POSIXct). Use 2023 as the year.
+• Convert the measurements for other variables to numbers.
+
+```{r}
+cvtDayHour =function(x, month)
+{    
+    # x=tmp[[1]]
+    # month='Jan'
+    str = sprintf("2023/%s/%s:00", month, trimws(x))
+    strptime(str, "%y/%b/%d:%H:%M")
+    as.POSIXct(strptime(str, "%Y/%b/%d:%H:%M"))
+    
+}
+ 
+```
+
+```{r}
+transMonthly=function(d){
+  d=tmp[[1]]
+  r.index= str_detect(d[,1],"Day:Hour") # which row corresponds to day hour
+  tmp=t(d[!r.index,-1]) # transpose and remove first name col and few rows
+  mode(tmp)="numeric"
+  d2=as.data.frame(tmp)
+  colnames(d2)=d[!r.index, 1]
+  
+  # add day:hour columns 
+  tmp=as.data.frame(t(d[r.index,-1]))
+  tmpnames=d[which(r.index)-1L,1]
+  tmpnames=paste0(tmpnames, "Time")
+  d2[tmpnames]=lapply(tmp, cvtDayHour, names(d)[-1])
+  return(d2)
+}
+
+transMonthly(tmp[[1]])
+```
+
+Apply to all monthly datasets
+```{r}
+# Function: return a list of data.frames with names
+tmp=lapply(titles,readStatFile, f=statFiles[1])
+names(tmp)=titles
+
+index=which(str_detect(titles[-6], "Monthly"))
+tmp[titles[index]]=lapply(tmp[titles[index]], transMonthly)
+tmp
+ 
+```
+
+For the hourly data tables,
+• convert each to a data.frame with 3 columns:
+– converting the month-hour pairs to rows with the single variable as a column – one column for the month
+– one column for the hour 
+```{r}
+transHourly =function(d, varName = names(d)[1])
+{   
+  
+    # wide -> long
+    #d=tmp[[3]]
+    # remove extra lines
+    r.index= str_detect(d[,1],"Hour")
+    d = d[!r.index, ]
+    
+    vals=as.numeric(unlist(d[,-1]))
+    tmp=data.frame(value=vals, month=rep(names(d)[-1],each=dim(d)[1]),
+                   hour=rep(trimws(str_sub(d[,1],1,2)),ncol(d)-1))
+    
+    return(tmp)
+}
+
+# Function: return a list of data.frames with names
+tmp=lapply(titles,readStatFile, f=statFiles[1])
+names(tmp)=titles
+
+index=which(str_detect(titles[-6], "Hourly"))
+tmp[titles[index]]=lapply(tmp[titles[index]], transHourly)
+tmp 
+
+```
+
+"Monthly Wind Direction {Interval 11.25 deg from displayed deg): Different!
+
+
+
+
+Finally,
+• combine the average hourly tables into a single data frame with a column for each variable, i.e., dry bulb temperature, dew, relative radiation, wind speed. Ensure that the rows correspond to the same time, i.e., month, hour and day.
+• for each variable, plot the values against hour for each month.
+
+```{r}
+# Function: return a list of data.frames with names
+tmp=lapply(titles,readStatFile, f=statFiles[1])
+names(tmp)=titles
+
+titles=titles[-6]
+tmp=tmp[-6]
+index=which(str_detect(titles, "Hourly"))
+tmp[titles[index]]=lapply(tmp[titles[index]], transHourly)
+tmp.hr=tmp[titles[index]]
+
+# first check month and hour are identical
+sapply(tmp.hr[-1], function(x) identical(tmp.hr[[1]][c("month","hour")],x[c("month","hour")]))
+
+```
+```{r}
+cdd=do.call(cbind, tmp.hr)
+names(cdd)
+keepi=which(str_detect(names(cdd),"value"))
+cdd=cdd[names(cdd)[c(keepi,11:12)]]
+names(cdd)=c("Dry Bulb temperatures","Dew Point temperatures","Relative Humidity",                    
+              "Wind Speed","Month","Hour")
+
+cdd%>%ggplot(aes(x=Hour, y=`Dry Bulb temperatures`,group=Month, col=Month))+
+  geom_line()
+
+cdd%>%ggplot(aes(x=Hour, y=`Dew Point temperatures`,group=Month, col=Month))+
+  geom_line()
+
+cdd%>%ggplot(aes(x=Hour, y=`Relative Humidity`,group=Month, col=Month))+
+  geom_line()
+
+ 
+ 
+  
+```
+
